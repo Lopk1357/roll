@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>สลับกล้อง & สุ่มใบหน้า</title>
+    <title>สุ่มใบหน้า (AI แม่นยำสูง)</title>
+    <!-- โหลดไลบรารี face-api.js -->
     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 10px; }
@@ -25,6 +26,16 @@
             width: 100%; 
             height: 100%; 
             object-fit: cover; 
+        }
+
+        /* เลเยอร์สีดำสำหรับทำพื้นหลังมืดตอนได้ผู้โชคดี */
+        #overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 5;
         }
 
         .controls {
@@ -50,6 +61,7 @@
         
         #result { font-size: 18px; font-weight: bold; color: #28a745; min-height: 25px; margin-bottom: 10px; }
         
+        /* ปรับป๊อปอัปให้แสดงเฉพาะรูปคนโดนสุ่มชัดๆ */
         #winner-popup {
             display: none; 
             position: absolute;
@@ -57,44 +69,54 @@
             left: 50%;
             transform: translate(-50%, -50%);
             background: white;
-            padding: 20px;
+            padding: 15px;
             border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.9);
             text-align: center;
             z-index: 10;
-            width: 60%;
-            max-width: 220px;
+            width: 65%;
+            max-width: 250px;
+            animation: popIn 0.4s ease-out;
         }
-        #winner-popup h2 { margin-top: 0; color: #d32f2f; font-size: 20px; }
+        
+        @keyframes popIn {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+
+        #winner-popup h2 { margin: 0 0 10px 0; color: #d32f2f; font-size: 22px; }
+        
         #winner-canvas {
-            border: 4px solid #ff9800;
-            border-radius: 10px;
+            border: 5px solid #28a745;
+            border-radius: 12px;
             width: 100%;
             height: auto;
             aspect-ratio: 1/1;
             object-fit: cover;
+            background: #000;
         }
     </style>
 </head>
 <body>
 
-    <h1 style="font-size: 22px;">สุ่มใบหน้า (รองรับมือถือ)</h1>
+    <h1 style="font-size: 22px;">ระบบสุ่มผู้โชคดี (AI แม่นยำ)</h1>
     
     <div class="controls">
         <button id="startBtn" onclick="startRandom()" disabled>กำลังโหลด AI...</button>
-        <!-- ปุ่มสลับกล้อง -->
         <button id="switchBtn" onclick="toggleCamera()" disabled>🔄 สลับกล้อง</button>
     </div>
     
-    <div id="result">กำลังเตรียมระบบ...</div>
+    <div id="result">กำลังเตรียมระบบ AI...</div>
 
     <div class="container">
         <video id="video" autoplay muted playsinline></video>
         <canvas id="canvas"></canvas>
+        <div id="overlay"></div> <!-- เลเยอร์พื้นหลังมืด -->
         
         <div id="winner-popup">
             <h2>ผู้โชคดี! 🎉</h2>
-            <canvas id="winner-canvas" width="200" height="200"></canvas>
+            <!-- โชว์เฉพาะหน้าคนที่สุ่มได้ -->
+            <canvas id="winner-canvas" width="250" height="250"></canvas>
         </div>
     </div>
 
@@ -106,131 +128,140 @@
         const switchBtn = document.getElementById('switchBtn');
         const winnerPopup = document.getElementById('winner-popup');
         const winnerCanvas = document.getElementById('winner-canvas');
+        const overlay = document.getElementById('overlay');
         
         let isRandomizing = false;
-        let useFrontCamera = true; // สถานะกล้องปัจจุบัน (true = หน้า, false = หลัง)
-        let currentStream = null; // เก็บตัวแปร stream ไว้เพื่อสั่งปิดก่อนสลับกล้อง
+        let useFrontCamera = true; 
+        let currentStream = null; 
 
-        // 1. ฟังก์ชันเปิดกล้อง
+        // 1. เปิดกล้อง
         async function startCamera() {
-            // ถ้ามีกล้องเปิดอยู่ ให้ปิดก่อนสลับ
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
             }
-
-            const constraints = { 
-                video: { 
-                    facingMode: useFrontCamera ? 'user' : 'environment' 
-                } 
-            };
-
+            const constraints = { video: { facingMode: useFrontCamera ? 'user' : 'environment' } };
             try {
                 currentStream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = currentStream;
-                
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                 };
             } catch (err) {
-                resultDiv.innerText = "ไม่สามารถเข้าถึงกล้องได้ (เช็ค HTTPS/สิทธิ์)";
+                resultDiv.innerText = "ไม่สามารถเข้าถึงกล้องได้";
                 resultDiv.style.color = "red";
-                console.error("Camera error:", err);
             }
         }
 
-        // 2. โหลด AI และเริ่มต้นระบบ
+        // 2. โหลด AI แบบใหม่ (SSD MobileNet V1) ที่แม่นยำขึ้น
         async function init() {
-            await startCamera(); // เปิดกล้องก่อน
-            
+            await startCamera();
             try {
                 const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
-                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                // อัปเกรดเป็นโมเดลที่จับหน้าเก่งขึ้น
+                await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
                 
                 startBtn.disabled = false;
                 switchBtn.disabled = false;
                 startBtn.innerText = "เริ่มสุ่มจับภาพ";
-                resultDiv.innerText = "พร้อมใช้งาน!";
+                resultDiv.innerText = "พร้อมใช้งานแล้ว!";
                 resultDiv.style.color = "#007bff";
             } catch (err) {
-                resultDiv.innerText = "โหลด AI ไม่สำเร็จ ลองรีเฟรชหน้าจอ";
+                resultDiv.innerText = "โหลด AI ไม่สำเร็จ";
                 resultDiv.style.color = "red";
             }
         }
 
-        // 3. ฟังก์ชันสลับกล้อง
+        // 3. สลับกล้อง
         function toggleCamera() {
-            if (isRandomizing) return; // ห้ามสลับตอนกำลังสุ่ม
+            if (isRandomizing) return;
             useFrontCamera = !useFrontCamera;
             startCamera();
         }
 
+        // 4. เริ่มกดสุ่ม
         function startRandom() {
             if (isRandomizing) return;
             isRandomizing = true;
             startBtn.disabled = true;
-            switchBtn.disabled = true; // ล็อคปุ่มสลับกล้องตอนสุ่ม
-            resultDiv.innerText = "กำลังสุ่มหาใบหน้า...";
+            switchBtn.disabled = true;
+            resultDiv.innerText = "กำลังค้นหาใบหน้าและสุ่ม...";
             resultDiv.style.color = "#ff9800";
             
-            const randomTime = Math.floor(Math.random() * 3000) + 2000; 
+            // ใช้เวลาสุ่มหลอก 2-4 วินาที
+            const randomTime = Math.floor(Math.random() * 2000) + 2000; 
             setTimeout(() => { captureFace(); }, randomTime);
         }
 
+        // 5. จับใบหน้าและตัดภาพเฉพาะคนถูกสุ่ม
         async function captureFace() {
             const context = canvas.getContext('2d');
-            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+            
+            // ตั้งค่า AI ให้จับหน้าที่ความมั่นใจ 40% (0.4) เพื่อให้จับง่ายขึ้น
+            const options = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 });
+            const detections = await faceapi.detectAllFaces(video, options);
             
             if (detections.length > 0) {
+                // หยุดวิดีโอ
                 context.drawImage(video, 0, 0, canvas.width, canvas.height);
                 video.pause(); 
                 
+                // สุ่มเลือก 1 คนจากใบหน้าที่เจอทั้งหมด
                 const randomIndex = Math.floor(Math.random() * detections.length);
                 const winnerFace = detections[randomIndex];
                 
-                showWinner(winnerFace.box);
+                // ส่งพิกัดใบหน้าไปทำ Crop
+                cropAndShowWinner(winnerFace.box);
                 
-                resultDiv.innerText = `🎉 สุ่มสำเร็จ! (เจอ ${detections.length} คน)`;
+                resultDiv.innerText = `🎉 จับภาพสำเร็จ! (เจอทั้งหมด ${detections.length} คน)`;
                 resultDiv.style.color = "#28a745";
                 
-                startBtn.innerText = "เริ่มใหม่อีกครั้ง";
+                startBtn.innerText = "เริ่มสุ่มใหม่อีกครั้ง";
                 startBtn.disabled = false;
                 switchBtn.disabled = false;
                 startBtn.onclick = resetSystem;
             } else {
-                resultDiv.innerText = "⚠️ ไม่พบใบหน้า กำลังหาใหม่...";
+                resultDiv.innerText = "⚠️ ยังไม่พบใบหน้าที่ชัดเจน กำลังหาใหม่...";
                 resultDiv.style.color = "#dc3545";
                 requestAnimationFrame(captureFace);
             }
         }
 
-        function showWinner(box) {
+        // 6. แคปเฉพาะหน้าคนนั้น แล้วโชว์เด่นๆ
+        function cropAndShowWinner(box) {
             const wCtx = winnerCanvas.getContext('2d');
-            const padding = 30;
+            
+            // ขยายขอบอกมารอบๆ หน้าเล็กน้อย (ให้เห็นหัว/คอ)
+            const padding = box.width * 0.4; // ขยาย 40% ของความกว้างหน้า
             let sx = Math.max(0, box.x - padding);
-            let sy = Math.max(0, box.y - padding);
+            let sy = Math.max(0, box.y - padding * 1.2); // ข้างบนเผื่อเยอะหน่อยให้เห็นผม
             let sWidth = Math.min(video.videoWidth - sx, box.width + padding * 2);
-            let sHeight = Math.min(video.videoHeight - sy, box.height + padding * 2);
+            let sHeight = Math.min(video.videoHeight - sy, box.height + padding * 2.2);
 
             wCtx.clearRect(0, 0, winnerCanvas.width, winnerCanvas.height);
+            
+            // วาดเฉพาะตำแหน่งหน้าที่ถูกสุ่ม ลงใน Canvas ผู้โชคดี
             wCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, winnerCanvas.width, winnerCanvas.height);
             
+            // เปิดเอฟเฟกต์หรี่พื้นหลังและโชว์รูป
+            overlay.style.display = "block";
             winnerPopup.style.display = "block";
         }
 
+        // 7. รีเซ็ตเมื่อกดสุ่มใหม่
         function resetSystem() {
             const context = canvas.getContext('2d');
             context.clearRect(0, 0, canvas.width, canvas.height); 
+            overlay.style.display = "none";
             winnerPopup.style.display = "none"; 
             video.play(); 
             isRandomizing = false;
             startBtn.innerText = "เริ่มสุ่มจับภาพ";
             startBtn.onclick = startRandom;
-            resultDiv.innerText = "พร้อมใช้งาน!";
+            resultDiv.innerText = "พร้อมใช้งานแล้ว!";
             resultDiv.style.color = "#007bff";
         }
 
-        // ป้องกันข้อผิดพลาดวิดีโอบนมือถือ
         video.addEventListener('play', () => {});
         init();
     </script>
